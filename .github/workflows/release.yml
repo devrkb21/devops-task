@@ -64,7 +64,7 @@ jobs:
 
       - name: Log in to Amazon ECR
         id: ecr
-        uses: aws-actions/amazon-ecr-login@aded0d722166a37980e030aa969dda0bfe6b6947 # v2.1.7
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
 
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 

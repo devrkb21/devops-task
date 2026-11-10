@@ -371,13 +371,36 @@ kubectl -n devops-task rollout history deployment/devops-task
 kubectl -n devops-task rollout undo deployment/devops-task
 ```
 
-<!-- TODO(candidate): run `make k8s-up && make k8s-demo` and paste the real output here -->
-Recorded output:
+Recorded output from a local run (k3d v5.9.0, kubectl v1.37.2), shortened. Full output:
+[`docs/evidence/k8s-demo.txt`](docs/evidence/k8s-demo.txt). HPA, probes and pod security
+checks: [`docs/evidence/k8s-checks.txt`](docs/evidence/k8s-checks.txt).
 
 ```text
-(paste the output of `make k8s-demo` here: version switch 1.0.0 -> 1.0.1 -> 1.0.0
- with "failed: 0" in both availability summaries, plus the rollout history)
+==> Rolling update to 1.0.1 while sending requests for 45s
+10:55:13  now serving version 1.0.0
+deployment.apps/devops-task image updated
+10:55:23  now serving version 1.0.1
+10:55:23  now serving version 1.0.0
+...
+deployment "devops-task" successfully rolled out
+requests: 352, failed: 0
+
+==> Rollout history
+REVISION  CHANGE-CAUSE
+1         <none>
+2         update image to devops-task:1.0.1
+
+==> Rollback with kubectl rollout undo while sending requests for 45s
+deployment.apps/devops-task rolled back
+...
+deployment "devops-task" successfully rolled out
+requests: 358, failed: 0
 ```
+
+No request failed in either direction, thanks to `maxUnavailable: 0`, the readiness
+probe and the `preStop` delay. For a few seconds both ReplicaSets have ready pods and the
+ingress sends traffic to both, which is why the output alternates between 1.0.0 and 1.0.1.
+So every release has to stay compatible with the one before it (API, data schema).
 
 ### How this changes for production on EKS
 

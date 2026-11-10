@@ -42,7 +42,7 @@ is assumed for the monitoring stack (Node Exporter and cAdvisor read host `/proc
 `/sys` and Docker data; on Docker Desktop they report the Docker VM instead).
 
 ```bash
-git clone https://github.com/<your-user>/devops-task.git && cd devops-task
+git clone https://github.com/devrkb21/devops-task.git && cd devops-task
 cp .env.example .env
 # Edit .env: set GRAFANA_ADMIN_PASSWORD, and DEBUG_TOKEN (e.g. `openssl rand -hex 16`)
 docker compose up -d --build        # .env sets COMPOSE_PROFILES=monitoring, so this starts everything
@@ -95,7 +95,7 @@ Needs AWS credentials for an account you control (`aws sts get-caller-identity` 
 # 1. One-time bootstrap: state bucket, ECR repository, GitHub OIDC role (local state)
 cd terraform/bootstrap
 terraform init
-terraform apply -var github_repository=<your-user>/devops-task
+terraform apply -var github_repository=devrkb21/devops-task
 # Note the outputs: state_bucket, ecr_repository_url, github_actions_role_arn
 
 # 2. Put the state_bucket value into both environments/*.s3.tfbackend files, then:

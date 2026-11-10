@@ -1,8 +1,8 @@
 name: Deploy
 
-# Deploys an image that already exists in ECR. Called by the release workflow for staging;
-# run it manually to promote a tested version to production (no rebuild), or to roll an
-# environment back to any earlier version.
+# Deploys an image that already exists in ECR. Called by release.yml (staging) and
+# promote.yml (production); run it manually to roll an environment back to any earlier
+# version. Accepts either tag of an image: the version (1.0.42) or the commit (sha-1a2b3c4).
 on:
   workflow_call:
     inputs:
@@ -20,7 +20,7 @@ on:
         options: [staging, production]
         required: true
       image_tag:
-        description: Existing image version to deploy, e.g. 1.0.42
+        description: Existing image tag to deploy, e.g. 1.0.42 or sha-1a2b3c4
         type: string
         required: true
 
@@ -63,9 +63,15 @@ jobs:
         run: |
           repo_uri=$(aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" \
             --query 'repositories[0].repositoryUri' --output text)
-          # Fail early if the tag was never built.
-          aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
-            --image-ids imageTag="$IMAGE_TAG" > /dev/null
+          # Fail early if the tag was never built. Every image carries two tags (1.0.N and
+          # sha-xxxxxxx) and the app reports the version, so look it up for the smoke test.
+          version=$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageTag="$IMAGE_TAG" --query 'imageDetails[0].imageTags' --output text \
+            | tr '\t' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)
+          if [[ -z $version ]]; then
+            echo "::error::Image tag $IMAGE_TAG not found in $ECR_REPOSITORY, or it has no version tag"
+            exit 1
+          fi
 
           read -r instance_id public_ip < <(aws ec2 describe-instances \
             --filters "Name=tag:Project,Values=$PROJECT" \
@@ -80,6 +86,7 @@ jobs:
 
           {
             echo "image=$repo_uri:$IMAGE_TAG"
+            echo "version=$version"
             echo "instance_id=$instance_id"
             echo "url=http://$public_ip:$APP_PORT"
           } >> "$GITHUB_OUTPUT"
@@ -101,10 +108,11 @@ jobs:
           curl --fail --silent --show-error --retry 10 --retry-delay 3 --retry-all-errors \
             --max-time 5 "$url/health"
           echo
+          expected="${{ steps.target.outputs.version }}"
           served=$(curl --fail --silent --max-time 5 "$url/" | jq -r .version)
           echo "Serving version: $served"
-          if [[ $served != "$IMAGE_TAG" ]]; then
-            echo "::error::Expected version $IMAGE_TAG but $served is serving"
+          if [[ $served != "$expected" ]]; then
+            echo "::error::Expected version $expected but $served is serving"
             exit 1
           fi
 

@@ -1,0 +1,118 @@
+name: Release
+
+# On every push to dev: run the CI gates again, build a multi-arch image once, push it
+# to ECR with immutable version tags, then deploy that exact image to staging.
+# Production gets the same image when dev is merged into pub (promote.yml): build once,
+# promote the tested artifact, never rebuild for production.
+on:
+  push:
+    branches: [dev]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One release at a time, and never cancel one halfway through a deployment.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: Build and push image
+    needs: ci
+    # Skipped until AWS is set up (bootstrap applied, AWS_ROLE_ARN variable set), so the
+    # repository stays green before then. The CI gates above still run on every push.
+    if: vars.AWS_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write # push the v<version> git tag
+      id-token: write # request the OIDC token for AWS
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    env:
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || 'devops-task' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Semantic version: MAJOR.MINOR from the VERSION file, PATCH = workflow run number,
+      # so every build on dev gets a unique, increasing version without manual bumps.
+      - name: Compute version
+        id: version
+        run: |
+          base=$(tr -d '[:space:]' < VERSION)
+          [[ $base =~ ^[0-9]+\.[0-9]+$ ]] || { echo "::error::VERSION must be MAJOR.MINOR"; exit 1; }
+          {
+            echo "version=${base}.${GITHUB_RUN_NUMBER}"
+            echo "short_sha=${GITHUB_SHA::7}"
+            echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials (OIDC, no stored keys)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: release-${{ github.run_id }}
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@aded0d722166a37980e030aa969dda0bfe6b6947 # v2.1.7
+
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          # Two immutable tags, never "latest": the semantic version for humans and
+          # release notes, the commit SHA for tracing an image back to its source.
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.version.outputs.version }}
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:sha-${{ steps.version.outputs.short_sha }}
+          build-args: |
+            APP_VERSION=${{ steps.version.outputs.version }}
+            VCS_REF=${{ github.sha }}
+            BUILD_DATE=${{ steps.version.outputs.build_date }}
+            SOURCE_URL=${{ github.server_url }}/${{ github.repository }}
+          # Layer cache in the GitHub Actions cache: unchanged layers are not rebuilt.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Build provenance and an SBOM are attached to the image as attestations.
+          provenance: mode=max
+          sbom: true
+
+      - name: Tag the commit
+        run: |
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
+
+      - name: Summary
+        run: |
+          {
+            echo "### Image pushed"
+            echo "- \`${{ env.ECR_REPOSITORY }}:${{ steps.version.outputs.version }}\`"
+            echo "- \`${{ env.ECR_REPOSITORY }}:sha-${{ steps.version.outputs.short_sha }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-staging:
+    name: Deploy to staging
+    needs: build
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: staging
+      image_tag: ${{ needs.build.outputs.version }}

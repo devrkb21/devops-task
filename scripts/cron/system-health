@@ -1,0 +1,7 @@
+# Alternative to the systemd timer for hosts without systemd.
+# Install: sudo cp scripts/cron/system-health /etc/cron.d/system-health
+# Format for /etc/cron.d: minute hour day month weekday USER command
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+*/5 * * * * root /usr/local/bin/system_health.sh --json --log-file /var/log/system-health/health_log.txt >/dev/null 2>&1

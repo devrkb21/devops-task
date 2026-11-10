@@ -1,0 +1,85 @@
+// Grafana Alloy: collect logs from every container on this Docker host and ship them to Loki.
+//
+// Label strategy (see README "Log labels"): Loki indexes labels, and every unique label
+// combination creates a new stream. Only a few low-cardinality values become labels:
+//   service, container, level, environment
+// Per-request fields such as path, method and status are kept as structured metadata,
+// which can still be filtered on in Grafana without multiplying streams.
+
+// 1. Discover containers through the Docker API.
+discovery.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "15s"
+}
+
+// 2. Map Docker metadata to Loki labels.
+discovery.relabel "containers" {
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+}
+
+// 3. Tail container logs. relabel_rules (not the relabelled targets) is used so the
+//    internal __meta_docker_container_id label is still available to find each container.
+loki.source.docker "containers" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.containers.targets
+  relabel_rules = discovery.relabel.containers.rules
+  forward_to    = [loki.process.containers.receiver]
+}
+
+// 4. Parse the app's JSON logs.
+loki.process "containers" {
+  forward_to = [loki.write.loki.receiver]
+
+  stage.match {
+    selector = "{service=\"app\"}"
+
+    stage.json {
+      expressions = {
+        level  = "level",
+        path   = "path",
+        method = "method",
+        status = "status",
+      }
+    }
+
+    // level has five possible values, so it is safe and very useful as a label.
+    stage.labels {
+      values = {
+        level = "",
+      }
+    }
+
+    // Unbounded or numerous values stay out of the index.
+    stage.structured_metadata {
+      values = {
+        path   = "",
+        method = "",
+        status = "",
+      }
+    }
+  }
+
+  stage.static_labels {
+    values = {
+      environment = "local",
+    }
+  }
+}
+
+// 5. Ship to Loki over the internal Docker network.
+loki.write "loki" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

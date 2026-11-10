@@ -1,0 +1,38 @@
+#!/bin/bash
+# First-boot bootstrap for the application host (Amazon Linux 2023).
+# Rendered by Terraform; runs once via cloud-init. Output: /var/log/cloud-init-output.log
+set -euo pipefail
+
+dnf install -y docker amazon-ecr-credential-helper
+systemctl enable --now docker
+
+# Docker pulls from ECR through the credential helper, which uses the instance role.
+# No registry password is ever written to disk.
+mkdir -p /root/.docker
+cat > /root/.docker/config.json <<'EOF'
+{ "credHelpers": { "${registry}": "ecr-login" } }
+EOF
+
+# Settings read by the deploy script and passed to the container.
+mkdir -p /etc/devops-task /var/lib/devops-task
+cat > /etc/devops-task/deploy.conf <<'EOF'
+AWS_REGION=${aws_region}
+LOG_GROUP=${log_group}
+APP_PORT=${app_port}
+EOF
+cat > /etc/devops-task/app.env <<'EOF'
+APP_ENV=${environment}
+LOG_LEVEL=info
+EOF
+
+# Deploy script invoked by the CI pipeline through AWS Systems Manager.
+cat > /usr/local/bin/deploy-app <<'DEPLOY_SCRIPT_EOF'
+${deploy_script}
+DEPLOY_SCRIPT_EOF
+chmod 0755 /usr/local/bin/deploy-app
+
+%{ if initial_image != "" ~}
+/usr/local/bin/deploy-app deploy "${initial_image}"
+%{ else ~}
+echo "No initial image configured; waiting for the first deploy from CI."
+%{ endif ~}

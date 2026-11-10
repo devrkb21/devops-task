@@ -1,0 +1,19 @@
+# Only the ingress controller (kube-system) and pods in this namespace may reach the app.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: devops-task
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: devops-task
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+        - podSelector: {}
+      ports:
+        - port: 8080
+          protocol: TCP

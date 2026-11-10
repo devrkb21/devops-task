@@ -278,9 +278,8 @@ scanner requests thousands of random paths.
 | Metadata | OCI labels: version, revision, created, source |
 | `.dockerignore` | Allow-list: only `app/` and `requirements.txt` enter the build context |
 
-<!-- TODO(candidate): run `make build` and replace XX with the real number -->
-**Final image size:** ~XX MB uncompressed (`docker image ls devops-task`). The CI job
-"Build, smoke test and scan image" also prints it in the run summary.
+**Final image size:** 103 MB uncompressed (`docker image ls devops-task`, Docker 29.1,
+linux/amd64). The CI job "Build, smoke test and scan image" also prints it in the run summary.
 
 `docker-compose.yml` runs the app on port 8080 with a health check, `restart:
 unless-stopped`, CPU/memory limits, read-only root filesystem, all capabilities dropped,
@@ -419,10 +418,19 @@ the `monitoring` network, declared `internal: true` (no published ports, no rout
   and **memory relative to the configured limit** (time series + current bar gauge),
   network per container, and a logs panel filtered by the same container variable.
 
-<!-- TODO(candidate): add screenshots after `docker compose up` + `make traffic` -->
+Screenshots from a local run: `make up`, then 8 minutes of `scripts/generate-traffic.sh`
+with `DEBUG_TOKEN` set, so about one request in five returns HTTP 500 (the error spike).
+
 | Application | Host | Containers |
 |---|---|---|
 | ![Application dashboard](docs/screenshots/dashboard-application.png) | ![Host dashboard](docs/screenshots/dashboard-host.png) | ![Containers dashboard](docs/screenshots/dashboard-containers.png) |
+
+Alerts during the same run ([`docs/evidence/alerts-firing.txt`](docs/evidence/alerts-firing.txt)):
+**AppHighErrorRate** (critical) went pending once the 5xx ratio passed 5% and fired after
+its 5-minute `for` window, at 8.5%. **HostDiskUsageHigh** went pending for a real reason:
+the laptop's small `/recovery` partition is 82% full.
+
+![Alert rules in Grafana, AppHighErrorRate firing](docs/screenshots/alert-rules.png)
 
 ### Log pipeline and label choices
 

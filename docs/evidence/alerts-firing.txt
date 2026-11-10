@@ -1,0 +1,21 @@
+# Prometheus alerts after 8 minutes of scripts/generate-traffic.sh with the error spike
+# Captured 2026-11-10T04:53:02Z from GET /api/v1/alerts
+
+[
+  {
+    "alertname": "AppHighErrorRate",
+    "severity": "critical",
+    "state": "firing",
+    "activeAt": "2026-11-10T04:43:56.123902673Z",
+    "value": "8.484005563282337e-02",
+    "summary": "App 5xx error rate is above 5%"
+  },
+  {
+    "alertname": "HostDiskUsageHigh",
+    "severity": "warning",
+    "state": "pending",
+    "activeAt": "2026-11-10T04:43:14.727674362Z",
+    "value": "8.181704385183713e+01",
+    "summary": "Disk usage on /recovery is above 80%"
+  }
+]

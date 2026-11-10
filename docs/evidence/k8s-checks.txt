@@ -1,0 +1,41 @@
+$ kubectl -n devops-task get hpa
+NAME          REFERENCE                TARGETS        MINPODS   MAXPODS   REPLICAS   AGE
+devops-task   Deployment/devops-task   cpu: 11%/70%   2         5         2          2m33s
+
+$ kubectl -n devops-task top pods
+NAME                           CPU(cores)   MEMORY(bytes)   
+devops-task-79fbbf477d-frm45   4m           36Mi            
+devops-task-79fbbf477d-zh6d8   4m           37Mi            
+
+$ kubectl -n devops-task exec devops-task-79fbbf477d-frm45 -- id
+uid=10001(app) gid=10001(app) groups=10001(app)
+
+$ kubectl -n devops-task exec devops-task-79fbbf477d-frm45 -- touch /written-by-test   # root filesystem is read-only
+touch: /written-by-test: Read-only file system
+command terminated with exit code 1
+exit code: 1
+
+$ kubectl -n devops-task exec devops-task-79fbbf477d-frm45 -- touch /tmp/written-by-test   # only the /tmp emptyDir is writable
+(no output: the write succeeded)
+exit code: 0
+
+$ kubectl -n devops-task get pod -o jsonpath (container securityContext)
+{
+  "allowPrivilegeEscalation": false,
+  "capabilities": {
+    "drop": [
+      "ALL"
+    ]
+  },
+  "readOnlyRootFilesystem": true,
+  "runAsNonRoot": true
+}
+
+$ kubectl get ns devops-task --show-labels   # Pod Security admission
+NAME          STATUS   AGE     LABELS
+devops-task   Active   2m34s   app.kubernetes.io/managed-by=kustomize,app.kubernetes.io/part-of=devops-task,kubernetes.io/metadata.name=devops-task,pod-security.kubernetes.io/enforce=restricted,pod-security.kubernetes.io/warn=restricted
+
+$ kubectl -n devops-task get pod -o custom-columns=NAME,READINESS,LIVENESS
+NAME                           READINESS   LIVENESS   STARTUP
+devops-task-79fbbf477d-frm45   /health     /health    /health
+devops-task-79fbbf477d-zh6d8   /health     /health    /health

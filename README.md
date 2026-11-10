@@ -278,9 +278,8 @@ scanner requests thousands of random paths.
 | Metadata | OCI labels: version, revision, created, source |
 | `.dockerignore` | Allow-list: only `app/` and `requirements.txt` enter the build context |
 
-<!-- TODO(candidate): run `make build` and replace XX with the real number -->
-**Final image size:** ~XX MB uncompressed (`docker image ls devops-task`). The CI job
-"Build, smoke test and scan image" also prints it in the run summary.
+**Final image size:** 103 MB uncompressed (`docker image ls devops-task`, Docker 29.1,
+linux/amd64). The CI job "Build, smoke test and scan image" also prints it in the run summary.
 
 `docker-compose.yml` runs the app on port 8080 with a health check, `restart:
 unless-stopped`, CPU/memory limits, read-only root filesystem, all capabilities dropped,
@@ -372,13 +371,36 @@ kubectl -n devops-task rollout history deployment/devops-task
 kubectl -n devops-task rollout undo deployment/devops-task
 ```
 
-<!-- TODO(candidate): run `make k8s-up && make k8s-demo` and paste the real output here -->
-Recorded output:
+Recorded output from a local run (k3d v5.9.0, kubectl v1.37.2), shortened. Full output:
+[`docs/evidence/k8s-demo.txt`](docs/evidence/k8s-demo.txt). HPA, probes and pod security
+checks: [`docs/evidence/k8s-checks.txt`](docs/evidence/k8s-checks.txt).
 
 ```text
-(paste the output of `make k8s-demo` here: version switch 1.0.0 -> 1.0.1 -> 1.0.0
- with "failed: 0" in both availability summaries, plus the rollout history)
+==> Rolling update to 1.0.1 while sending requests for 45s
+10:55:13  now serving version 1.0.0
+deployment.apps/devops-task image updated
+10:55:23  now serving version 1.0.1
+10:55:23  now serving version 1.0.0
+...
+deployment "devops-task" successfully rolled out
+requests: 352, failed: 0
+
+==> Rollout history
+REVISION  CHANGE-CAUSE
+1         <none>
+2         update image to devops-task:1.0.1
+
+==> Rollback with kubectl rollout undo while sending requests for 45s
+deployment.apps/devops-task rolled back
+...
+deployment "devops-task" successfully rolled out
+requests: 358, failed: 0
 ```
+
+No request failed in either direction, thanks to `maxUnavailable: 0`, the readiness
+probe and the `preStop` delay. For a few seconds both ReplicaSets have ready pods and the
+ingress sends traffic to both, which is why the output alternates between 1.0.0 and 1.0.1.
+So every release has to stay compatible with the one before it (API, data schema).
 
 ### How this changes for production on EKS
 
@@ -419,10 +441,19 @@ the `monitoring` network, declared `internal: true` (no published ports, no rout
   and **memory relative to the configured limit** (time series + current bar gauge),
   network per container, and a logs panel filtered by the same container variable.
 
-<!-- TODO(candidate): add screenshots after `docker compose up` + `make traffic` -->
+Screenshots from a local run: `make up`, then 8 minutes of `scripts/generate-traffic.sh`
+with `DEBUG_TOKEN` set, so about one request in five returns HTTP 500 (the error spike).
+
 | Application | Host | Containers |
 |---|---|---|
 | ![Application dashboard](docs/screenshots/dashboard-application.png) | ![Host dashboard](docs/screenshots/dashboard-host.png) | ![Containers dashboard](docs/screenshots/dashboard-containers.png) |
+
+Alerts during the same run ([`docs/evidence/alerts-firing.txt`](docs/evidence/alerts-firing.txt)):
+**AppHighErrorRate** (critical) went pending once the 5xx ratio passed 5% and fired after
+its 5-minute `for` window, at 8.5%. **HostDiskUsageHigh** went pending for a real reason:
+the laptop's small `/recovery` partition is 82% full.
+
+![Alert rules in Grafana, AppHighErrorRate firing](docs/screenshots/alert-rules.png)
 
 ### Log pipeline and label choices
 

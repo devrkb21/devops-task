@@ -1,0 +1,11 @@
+[Unit]
+Description=Run system_health.sh every 5 minutes
+
+[Timer]
+OnCalendar=*:0/5
+# Run a missed check after boot or downtime instead of silently skipping it.
+Persistent=true
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,24 @@
+[Unit]
+Description=Collect host health metrics (system_health.sh)
+Documentation=man:systemd.timer(5)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/system_health.sh --json --log-file /var/log/system-health/health_log.txt
+# Exit 1 (warning) is informational. Exit 2 (critical) and 3 (unknown) mark the unit as
+# failed, so `systemctl --failed`, node_exporter's systemd collector or an OnFailure= hook
+# can pick them up.
+SuccessExitStatus=1
+# Optional HEALTH_WEBHOOK_URL=... lives here, outside the repository.
+EnvironmentFile=-/etc/default/system-health
+
+# Least privilege: a throwaway unprivileged user that may only write its own log directory.
+DynamicUser=yes
+LogsDirectory=system-health
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+Nice=10

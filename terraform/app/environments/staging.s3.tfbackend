@@ -1,0 +1,6 @@
+# Replace REPLACE_ME with the `state_bucket` output of terraform/bootstrap.
+bucket       = "devops-task-tfstate-REPLACE_ME"
+key          = "devops-task/staging/terraform.tfstate"
+region       = "us-east-1"
+encrypt      = true
+use_lockfile = true

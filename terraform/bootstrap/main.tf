@@ -175,13 +175,13 @@ data "aws_iam_policy_document" "github_trust" {
       values   = ["sts.amazonaws.com"]
     }
 
-    # Only the main branch (image build) and the two deployment environments of this one
+    # Only the dev branch (image build) and the two deployment environments of this one
     # repository may assume the role. Pull requests and forks cannot.
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
       values = [
-        "repo:${var.github_repository}:ref:refs/heads/main",
+        "repo:${var.github_repository}:ref:refs/heads/dev",
         "repo:${var.github_repository}:environment:staging",
         "repo:${var.github_repository}:environment:production",
       ]

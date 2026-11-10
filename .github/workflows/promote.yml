@@ -1,0 +1,68 @@
+name: Promote
+
+# Runs when dev is merged into pub (the production branch). It does not rebuild: it finds
+# the image that release.yml already built, deployed and smoke-tested on staging for the
+# merged dev commit, and deploys that same artifact to production. The production GitHub
+# Environment can require a reviewer's approval before the deploy job starts.
+on:
+  push:
+    branches: [pub]
+
+permissions:
+  contents: read
+
+# One promotion at a time, and never cancel one halfway through a deployment.
+concurrency:
+  group: promote
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Find the image released from dev
+    # Skipped until AWS is set up, like the build job in release.yml.
+    if: vars.AWS_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.find.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # full history plus the v* tags that release.yml pushes
+
+      - name: Resolve the version to promote
+        id: find
+        run: |
+          # A pull request merged with a merge commit has the dev commit as second parent;
+          # a fast-forward push has it as HEAD itself.
+          merged=$(git rev-parse --verify --quiet 'HEAD^2' || git rev-parse HEAD)
+
+          if ! tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' "$merged"); then
+            echo "::error::No release tag behind ${merged::7}. Has release.yml finished on dev?"
+            exit 1
+          fi
+
+          # Commits after that tag are fine only if they cannot change the image
+          # (release.yml skips docs-only pushes, so those never get their own tag).
+          changed=$(git diff --name-only "$tag" "$merged" -- . ':(exclude)*.md' ':(exclude)docs')
+          if [[ -n $changed ]]; then
+            echo "::error::${merged::7} has code changes that $tag does not include. Wait for the Release run on dev to finish, then re-run this job."
+            echo "$changed"
+            exit 1
+          fi
+
+          version=${tag#v}
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Promoting \`$version\` (release tag \`$tag\`, merged dev commit \`${merged::7}\`)" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+  deploy-production:
+    name: Deploy to production
+    needs: resolve
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: production
+      image_tag: ${{ needs.resolve.outputs.version }}

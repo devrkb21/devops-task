@@ -1,10 +1,10 @@
 name: CI
 
-# Runs on every pull request, and is reused by the release workflow so main is
-# checked by exactly the same gates before anything is built and pushed.
+# Runs on every pull request into dev or pub, and is reused by the release workflow so
+# dev is checked by exactly the same gates before anything is built and pushed.
 on:
   pull_request:
-    branches: [main]
+    branches: [dev, pub]
   workflow_call:
 
 permissions:

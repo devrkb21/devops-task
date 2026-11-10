@@ -1,11 +1,12 @@
 name: Release
 
-# On every push to main: run the CI gates again, build a multi-arch image once, push it
+# On every push to dev: run the CI gates again, build a multi-arch image once, push it
 # to ECR with immutable version tags, then deploy that exact image to staging.
-# Production gets the same image later through the Deploy workflow (build once, promote).
+# Production gets the same image when dev is merged into pub (promote.yml): build once,
+# promote the tested artifact, never rebuild for production.
 on:
   push:
-    branches: [main]
+    branches: [dev]
     paths-ignore:
       - "**.md"
       - "docs/**"
@@ -26,6 +27,9 @@ jobs:
   build:
     name: Build and push image
     needs: ci
+    # Skipped until AWS is set up (bootstrap applied, AWS_ROLE_ARN variable set), so the
+    # repository stays green before then. The CI gates above still run on every push.
+    if: vars.AWS_ROLE_ARN != ''
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -39,7 +43,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Semantic version: MAJOR.MINOR from the VERSION file, PATCH = workflow run number,
-      # so every build on main gets a unique, increasing version without manual bumps.
+      # so every build on dev gets a unique, increasing version without manual bumps.
       - name: Compute version
         id: version
         run: |

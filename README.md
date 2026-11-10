@@ -129,10 +129,12 @@ The pipeline needs **no secrets**: it authenticates to AWS with OIDC.
 | Repository variable | `AWS_REGION` | e.g. `us-east-1` |
 | Repository variable (optional) | `ECR_REPOSITORY`, `PROJECT`, `APP_PORT` | defaults: `devops-task`, `devops-task`, `8080` |
 | Environment | `staging` | no protection needed |
-| Environment | `production` | **required reviewers** + deployment branch rule `main` |
+| Environment | `production` | **required reviewers** + deployment branch rule `pub` |
 
-Order for a first deploy: bootstrap → set the variables → `terraform apply` staging → push
-to `main`. The release workflow builds `1.0.<run>` and deploys it to staging.
+Order for a first deploy: bootstrap → set the variables → `terraform apply` staging and
+production → push to `dev`. The release workflow builds `1.0.<run>` and deploys it to
+staging; merging `dev` into `pub` then deploys the same image to production. Until
+`AWS_ROLE_ARN` is set, the build and deploy jobs are skipped and only the CI gates run.
 
 <!-- TODO(candidate): link a successful workflow run or add screenshots -->
 > **Deploy evidence:** link to a successful *Release* run / `docs/screenshots/deploy-run.png`
@@ -158,17 +160,20 @@ Details and recorded output in [section 7](#7-kubernetes).
 
 ```mermaid
 flowchart LR
-    dev([Developer]) -->|branch + PR| pr
+    dev([Developer]) -->|feature branch + PR into dev| pr
 
     subgraph gha[GitHub Actions]
         pr["CI on pull request<br/>ruff · pytest + coverage<br/>hadolint · shellcheck<br/>kubeconform · promtool<br/>terraform fmt/validate<br/>image build + smoke test<br/>Trivy: fail on CRITICAL"]
-        rel["Release on push to main<br/>same CI gates<br/>multi-arch build amd64 + arm64<br/>tags 1.0.N and sha-abc1234"]
+        rel["Release on push to dev<br/>same CI gates<br/>multi-arch build amd64 + arm64<br/>tags 1.0.N and sha-abc1234"]
+        prom["Promote on merge dev → pub<br/>no rebuild: deploys the image<br/>already released from dev"]
         dep["Deploy job<br/>GitHub Environment<br/>staging auto · production approval"]
     end
 
-    pr -->|merge| rel
+    pr -->|merge into dev| rel
     rel -->|OIDC role, no keys| ecr[("Amazon ECR<br/>immutable tags")]
-    rel --> dep
+    rel -->|staging| dep
+    rel -.->|PR dev → pub| prom
+    prom -->|production| dep
     dep -->|ssm send-command<br/>deploy-app deploy image| ec2
 
     subgraph aws[AWS account]
@@ -285,13 +290,20 @@ unless-stopped`, CPU/memory limits, read-only root filesystem, all capabilities 
 
 ## 5. CI/CD pipeline
 
+**Branches.** `dev` is the integration branch (the default branch): feature branches are
+merged into it through pull requests, and every push to `dev` is released to staging.
+`pub` is the production branch: it only changes through a pull request from `dev`, merged
+with a merge commit, and every merge is deployed to production. Production therefore only
+runs images that were already built, deployed and smoke-tested on staging.
+
 Workflows in `.github/workflows/`:
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `ci.yml` | every pull request (and reused by `release.yml`) | **test:** ruff lint + format, pytest, coverage table in the job summary, `coverage.xml` artifact. **static-checks:** hadolint, shellcheck, kubeconform on the rendered Kustomize output, promtool on alert rules, dashboard JSON check. **terraform:** `fmt -check`, `validate` for both root modules. **image:** build with layer cache, run the container and smoke-test it (including "is it non-root?"), Trivy report, then a Trivy gate that **fails on CRITICAL** |
-| `release.yml` | push to `main` | runs `ci.yml` again, then builds **linux/amd64 + linux/arm64** with the GitHub Actions layer cache, pushes to ECR with tags `1.0.<run number>` and `sha-<commit>`, attaches SBOM + provenance, creates git tag `v1.0.<run>`, then calls `deploy.yml` for staging |
-| `deploy.yml` | called by release, or run manually | verifies the tag exists in ECR, finds the instance by tags, runs `deploy-app` through **SSM** (no SSH), smoke-tests `/health` from the internet and checks the served version, **rolls back automatically** if the smoke test fails |
+| `ci.yml` | every pull request into `dev` or `pub` (and reused by `release.yml`) | **test:** ruff lint + format, pytest, coverage table in the job summary, `coverage.xml` artifact. **static-checks:** hadolint, shellcheck, kubeconform on the rendered Kustomize output, promtool on alert rules, dashboard JSON check. **terraform:** `fmt -check`, `validate` for both root modules. **image:** build with layer cache, run the container and smoke-test it (including "is it non-root?"), Trivy report, then a Trivy gate that **fails on CRITICAL** |
+| `release.yml` | push to `dev` | runs `ci.yml` again, then (once `AWS_ROLE_ARN` is set) builds **linux/amd64 + linux/arm64** with the GitHub Actions layer cache, pushes to ECR with tags `1.0.<run number>` and `sha-<commit>`, attaches SBOM + provenance, creates git tag `v1.0.<run>`, then calls `deploy.yml` for staging |
+| `promote.yml` | push to `pub` (merge of a `dev` → `pub` pull request) | finds the `v1.0.N` release tag behind the merged `dev` commit, refuses if code changed after that tag, then calls `deploy.yml` for production with that **same image** (no rebuild) |
+| `deploy.yml` | called by release and promote, or run manually | accepts either tag (`1.0.N` or `sha-xxxxxxx`), verifies it exists in ECR, finds the instance by tags, runs `deploy-app` through **SSM** (no SSH), smoke-tests `/health` from the internet and checks the served version, **rolls back automatically** if the smoke test fails |
 
 Supply-chain hardening: every third-party action is pinned to a **full commit SHA**
 (tags can be moved). Trivy runs from the pinned image `aquasec/trivy:0.69.3` rather than
@@ -301,7 +313,7 @@ confirmed 0.69.3 as safe.
 
 **Secrets and variables:** no secrets at all. See the table in
 [GitHub Actions setup](#github-actions-setup). AWS access is a short-lived OIDC session
-whose IAM trust policy only accepts `main` and the `staging`/`production` environments of
+whose IAM trust policy only accepts `dev` and the `staging`/`production` environments of
 this repository. `GITHUB_TOKEN` (automatic) pushes the git tag.
 
 ---
@@ -563,13 +575,15 @@ validated by `promtool` in CI, and keep working if Grafana is down.
 
 **How a release reaches production**
 
-1. Work on a branch, open a pull request. `ci.yml` must pass (tests, linters, Trivy, Terraform validation).
-2. Merge to `main`. `release.yml` re-runs the gates, builds the multi-arch image once and pushes `1.0.N` + `sha-xxxxxxx` to ECR.
+1. Work on a feature branch, open a pull request into `dev`. `ci.yml` must pass (tests, linters, Trivy, Terraform validation).
+2. Merge into `dev`. `release.yml` re-runs the gates, builds the multi-arch image once, pushes `1.0.N` + `sha-xxxxxxx` to ECR and tags the commit `v1.0.N`.
 3. The image is deployed to **staging** automatically: `deploy-app` pulls it, restarts the
    container, and waits for `/health`; then the workflow smoke-tests `/health` from
    outside and checks `/` reports version `1.0.N`.
-4. To promote: run the **Deploy** workflow with `environment: production` and the same tag.
-   The `production` GitHub Environment requires a reviewer's approval and only allows `main`.
+4. To promote: open a pull request from `dev` into `pub` and merge it with a merge commit.
+   `promote.yml` finds the release tag behind the merged `dev` commit and deploys that same
+   image to production. The `production` GitHub Environment requires a reviewer's approval
+   and only allows `pub`.
 
 **How to roll back**
 
@@ -600,7 +614,7 @@ The Kubernetes setup already does this with `maxUnavailable: 0`.
 - **Supply chain:** actions pinned to commit SHAs, Trivy pinned to a verified-safe image,
   hash-locked Python dependencies, pinned base and monitoring images.
 - **IAM:** the CI role can push to one repository and send commands only to instances
-  tagged with this project, and only from `main` or the two environments; the instance role
+  tagged with this project, and only from `dev` or the two environments; the instance role
   can pull one repository and write one log group.
 - **Network exposure:** EC2 exposes only port 8080 (restrict `allowed_cidrs` for staging);
   no SSH. Locally only the app (8080) and Grafana (3000) are published; the rest of the

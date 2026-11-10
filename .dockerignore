@@ -1,0 +1,10 @@
+# Allow-list: ignore everything, then add back only what the image needs.
+# This keeps the build context small and stops secrets (.env, *.tfstate, .git)
+# from ever reaching the Docker daemon.
+*
+!app/
+!requirements.txt
+
+# Never ship local bytecode caches.
+**/__pycache__
+**/*.pyc

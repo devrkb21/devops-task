@@ -1,0 +1,45 @@
+# Prometheus configuration. Retention is set on the command line in docker-compose.yml
+# (--storage.tsdb.retention.time / .size), because Prometheus has no config-file setting for it.
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+  external_labels:
+    environment: local
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  # The application itself: request count, error count, latency histogram.
+  - job_name: app
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["app:8080"]
+
+  # Host metrics: CPU, memory, disk, network.
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  # Per-container CPU, memory and network.
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+
+  # The monitoring stack watches itself, so a broken collector is noticed.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: loki
+    static_configs:
+      - targets: ["loki:3100"]
+
+  - job_name: alloy
+    static_configs:
+      - targets: ["alloy:12345"]
+
+  - job_name: grafana
+    static_configs:
+      - targets: ["grafana:3000"]

@@ -1,0 +1,122 @@
+# Alerting rules. The reasoning behind each threshold and `for` duration is documented in
+# README.md ("Alerting rules"). Rules are visible in Grafana under
+# Alerting > Alert rules (data source-managed), since only Grafana is exposed to the host.
+groups:
+  - name: app
+    rules:
+      - alert: AppInstanceDown
+        expr: up{job="app"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "App instance {{ $labels.instance }} is down"
+          description: "Prometheus has failed to scrape {{ $labels.instance }} for over 1 minute."
+
+      - alert: AppHighErrorRate
+        # Share of real traffic answered with a 5xx. Health probes and metric scrapes are
+        # excluded so they cannot dilute the ratio. The second condition ignores near-idle
+        # periods, where a single failed request would otherwise be a 100% error rate.
+        expr: |
+          (
+            sum by (job) (rate(http_request_errors_total{job="app", path!~"/health|/metrics"}[5m]))
+            /
+            sum by (job) (rate(http_requests_total{job="app", path!~"/health|/metrics"}[5m]))
+          ) > 0.05
+          and
+          sum by (job) (rate(http_requests_total{job="app", path!~"/health|/metrics"}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "App 5xx error rate is above 5%"
+          description: "{{ $value | humanizePercentage }} of requests failed over the last 5 minutes."
+
+      - alert: AppHighLatencyP95
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(http_request_duration_seconds_bucket{job="app", path!~"/health|/metrics"}[5m]))
+          ) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "App p95 latency is above 500ms"
+          description: "p95 latency is {{ $value | humanizeDuration }} over the last 10 minutes."
+
+  - name: host
+    rules:
+      - alert: HostDiskUsageHigh
+        expr: |
+          100 * (
+            1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs|nsfs"}
+                / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs|nsfs"}
+          ) > 80
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk usage on {{ $labels.mountpoint }} is above 80%"
+          description: "{{ $labels.mountpoint }} is {{ $value | printf \"%.1f\" }}% full."
+
+      - alert: HostDiskWillFillIn24Hours
+        # Linear trend over the last 6h predicts the disk is full within a day.
+        expr: |
+          predict_linear(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs|nsfs"}[6h], 24 * 3600) < 0
+          and
+          node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs|nsfs"}
+            / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs|nsfs"} < 0.4
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk {{ $labels.mountpoint }} is predicted to fill within 24 hours"
+          description: "At the current growth rate {{ $labels.mountpoint }} runs out of space within a day."
+
+      - alert: HostHighCpuUsage
+        expr: |
+          100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m]))) > 90
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Host CPU usage is above 90%"
+          description: "CPU usage has been {{ $value | printf \"%.1f\" }}% for 15 minutes."
+
+      - alert: HostMemoryLow
+        expr: |
+          100 * node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Host has less than 10% memory available"
+          description: "Only {{ $value | printf \"%.1f\" }}% of memory is available."
+
+  - name: containers
+    rules:
+      - alert: ContainerMemoryNearLimit
+        # Containers without a memory limit report a limit of 0 and are excluded.
+        expr: |
+          container_memory_working_set_bytes{name!=""}
+            / (container_spec_memory_limit_bytes{name!=""} > 0)
+          > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container {{ $labels.name }} is above 90% of its memory limit"
+          description: "{{ $labels.name }} uses {{ $value | humanizePercentage }} of its limit and may be OOM-killed."
+
+  - name: monitoring
+    rules:
+      - alert: ScrapeTargetDown
+        # The app has its own, faster alert above.
+        expr: up{job!="app"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Monitoring target {{ $labels.job }} is down"
+          description: "{{ $labels.instance }} has not been scraped for 5 minutes; its data is missing."

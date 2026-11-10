@@ -1,21 +1,28 @@
 version: 2
+
+# Updates always go to dev first, like any other change. Production (pub) only changes
+# through a dev -> pub pull request, whichever branch is the repository default.
 updates:
   - package-ecosystem: pip
+    target-branch: dev
     directory: /
     schedule:
       interval: weekly
 
   - package-ecosystem: docker
+    target-branch: dev
     directory: /
     schedule:
       interval: weekly
 
   - package-ecosystem: github-actions
+    target-branch: dev
     directory: /
     schedule:
       interval: weekly
 
   - package-ecosystem: terraform
+    target-branch: dev
     directories:
       - /terraform/bootstrap
       - /terraform/app

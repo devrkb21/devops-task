@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Local configuration and secrets (never commit these)
+.env
+*.secret.env
+k8s/overlays/local/secret.env
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Health script output
+health_log.txt
+health_log.txt.*
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store

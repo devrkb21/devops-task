@@ -113,11 +113,16 @@ Clean up afterwards: `terraform destroy -var-file=environments/staging.tfvars` i
 `terraform/app`. The bootstrap state bucket has `prevent_destroy`; to remove it, empty the
 bucket, delete the lifecycle block and run `terraform destroy` in `terraform/bootstrap`.
 
-Evidence of a real run:
-
-<!-- TODO(candidate): replace with your own output/screenshots after running terraform -->
-> **Terraform plan/apply evidence:** see `docs/evidence/terraform-plan.txt` and
-> `docs/screenshots/terraform-apply.png` *(to be added after running against AWS)*.
+> **Status: not applied to AWS yet.** I did not have an AWS account available during the
+> assessment window, so there is no `terraform plan`/`apply` output or live deployment
+> to show. What is verified without an account:
+>
+> - `terraform fmt -check` and `terraform validate` pass for both root modules, locally
+>   with Terraform 1.17.1 and in CI on every pull request. Provider versions are pinned
+>   in the committed `.terraform.lock.hcl` files (AWS provider 6.72.0).
+> - The Release and Promote workflows already run on every push to `dev` and `pub`. Their
+>   AWS jobs are skipped until `AWS_ROLE_ARN` is set, so after the steps above they start
+>   deploying without any code change.
 
 ### GitHub Actions setup
 
@@ -136,9 +141,10 @@ production → push to `dev`. The release workflow builds `1.0.<run>` and deploy
 staging; merging `dev` into `pub` then deploys the same image to production. Until
 `AWS_ROLE_ARN` is set, the build and deploy jobs are skipped and only the CI gates run.
 
-<!-- TODO(candidate): link a successful workflow run or add screenshots -->
-> **Deploy evidence:** link to a successful *Release* run / `docs/screenshots/deploy-run.png`
-> *(to be added)*.
+> **Deploy evidence:** none yet, see the status note in
+> [Terraform (AWS)](#terraform-aws). The CI gates of the
+> [Release workflow](https://github.com/devrkb21/devops-task/actions/workflows/release.yml)
+> run on every push to `dev`.
 
 ### Kubernetes (k3d)
 

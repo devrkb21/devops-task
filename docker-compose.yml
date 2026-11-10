@@ -215,7 +215,9 @@ services:
       resources:
         limits:
           cpus: "0.50"
-          memory: 256M
+          # Measured after loading the three dashboards: 220 MiB with the old 256M limit
+          # (85%, near the 90% ContainerMemoryNearLimit alert); about 270 MiB (70%) with 384M.
+          memory: 384M
     networks:
       - frontend
       - monitoring

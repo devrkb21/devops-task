@@ -1,0 +1,52 @@
+name: devops-task
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  app:
+    build:
+      context: .
+      args:
+        APP_VERSION: ${APP_VERSION:-1.0.0-local}
+    image: devops-task:${APP_VERSION:-1.0.0-local}
+    ports:
+      - "8080:8080"
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      PORT: "8080"
+      # Optional: enables /debug/error and /debug/slow for demoing alerts and dashboards.
+      DEBUG_TOKEN: ${DEBUG_TOKEN:-}
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.healthcheck"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    stop_grace_period: 30s
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+        reservations:
+          cpus: "0.10"
+          memory: 64M
+    logging: *default-logging
+    networks:
+      - frontend
+
+networks:
+  frontend:

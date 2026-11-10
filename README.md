@@ -707,9 +707,9 @@ with 2 small tasks + ALB ≈ $45/month; EKS ≈ $73/month for the control plane 
 
 ## 15. Use of AI tools
 
-<!-- TODO(candidate): make this statement accurate for how you actually worked -->
-I used an AI assistant as a pair programmer: to discuss the design,
-draft parts of the code, configuration and documentation, and look up current tool
-versions and security advisories (for example the March 2026 Trivy incident). I reviewed
-every file, ran the tests, linters and the local stack myself, and I can explain each
-part of this submission and the reasoning behind it.
+I used an AI assistant during this assessment, as the task allows: to draft code,
+configuration and documentation, and to look up current tool versions and security
+advisories (for example the March 2026 Trivy incident). I set the requirements and the
+branch workflow, and everything was run and checked on my own machine: the tests and
+linters, the Docker stack under load, and the k3d rollout and rollback. I can explain
+every part of this submission and the reasoning behind it.

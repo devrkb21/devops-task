@@ -1,0 +1,5 @@
+# Vulnerabilities accepted after review. One CVE ID per line, each with a reason, an
+# owner and a review date. Keep this list empty unless there is a documented exception.
+#
+# Example:
+# CVE-2099-12345  # not reachable: package unused at runtime; owner: you; review: 2026-12-01

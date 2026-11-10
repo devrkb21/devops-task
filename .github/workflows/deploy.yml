@@ -1,0 +1,125 @@
+name: Deploy
+
+# Deploys an image that already exists in ECR. Called by the release workflow for staging;
+# run it manually to promote a tested version to production (no rebuild), or to roll an
+# environment back to any earlier version.
+on:
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        required: true
+      image_tag:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        options: [staging, production]
+        required: true
+      image_tag:
+        description: Existing image version to deploy, e.g. 1.0.42
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.image_tag }} to ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # GitHub Environment: holds per-environment variables, and "production" can require
+    # a manual approval before this job starts (Settings > Environments > reviewers).
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ steps.target.outputs.url }}
+    env:
+      ENVIRONMENT: ${{ inputs.environment }}
+      IMAGE_TAG: ${{ inputs.image_tag }}
+      PROJECT: ${{ vars.PROJECT || 'devops-task' }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || 'devops-task' }}
+      APP_PORT: ${{ vars.APP_PORT || '8080' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Configure AWS credentials (OIDC, no stored keys)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: deploy-${{ inputs.environment }}-${{ github.run_id }}
+
+      - name: Resolve image and target instance
+        id: target
+        run: |
+          repo_uri=$(aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" \
+            --query 'repositories[0].repositoryUri' --output text)
+          # Fail early if the tag was never built.
+          aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageTag="$IMAGE_TAG" > /dev/null
+
+          read -r instance_id public_ip < <(aws ec2 describe-instances \
+            --filters "Name=tag:Project,Values=$PROJECT" \
+                      "Name=tag:Environment,Values=$ENVIRONMENT" \
+                      "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].[InstanceId,PublicIpAddress]' \
+            --output text)
+          if [[ -z $instance_id || $instance_id == None ]]; then
+            echo "::error::No running instance tagged Project=$PROJECT Environment=$ENVIRONMENT"
+            exit 1
+          fi
+
+          {
+            echo "image=$repo_uri:$IMAGE_TAG"
+            echo "instance_id=$instance_id"
+            echo "url=http://$public_ip:$APP_PORT"
+          } >> "$GITHUB_OUTPUT"
+
+      # deploy-app pulls the image, restarts the container and health-checks it on the
+      # instance. If the new version is unhealthy it rolls back by itself and fails.
+      - name: Deploy through AWS Systems Manager
+        id: deploy
+        run: |
+          scripts/ci/ssm-run.sh "${{ steps.target.outputs.instance_id }}" \
+            "/usr/local/bin/deploy-app deploy ${{ steps.target.outputs.image }}"
+
+      # Second check from outside the instance: catches what the on-host check cannot,
+      # such as a broken security group, and confirms the expected version is serving.
+      - name: Smoke test from the internet
+        id: smoke
+        run: |
+          url="${{ steps.target.outputs.url }}"
+          curl --fail --silent --show-error --retry 10 --retry-delay 3 --retry-all-errors \
+            --max-time 5 "$url/health"
+          echo
+          served=$(curl --fail --silent --max-time 5 "$url/" | jq -r .version)
+          echo "Serving version: $served"
+          if [[ $served != "$IMAGE_TAG" ]]; then
+            echo "::error::Expected version $IMAGE_TAG but $served is serving"
+            exit 1
+          fi
+
+      - name: Roll back after failed smoke test
+        if: failure() && steps.deploy.outcome == 'success'
+        run: |
+          echo "::warning::Smoke test failed; rolling back to the previous image"
+          scripts/ci/ssm-run.sh "${{ steps.target.outputs.instance_id }}" \
+            "/usr/local/bin/deploy-app rollback"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Deploy to \`$ENVIRONMENT\`"
+            echo "- Image: \`${{ steps.target.outputs.image }}\`"
+            echo "- Deploy: ${{ steps.deploy.outcome }}, smoke test: ${{ steps.smoke.outcome }}"
+          } >> "$GITHUB_STEP_SUMMARY"
